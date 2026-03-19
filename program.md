@@ -1,115 +1,164 @@
-# autoresearch-mlx
+# autoresearch-gamedev
 
-This is an Apple Silicon (MLX) port of Karpathy's autoresearch — an experiment to have the LLM do its own research. All training runs natively on MLX with unified memory. No PyTorch or CUDA required.
+This is an autonomous experiment loop for iterating on the **blocks** game
+(`~/git/blocks`) — a Lumines-inspired puzzle game where 2×2 pieces fall onto a
+grid and a sweeper clears monochromatic 2×2 squares.
 
-**Monorepo note:** This project may live inside a larger repo. Always stage only `autoresearch-mlx/` paths. Never use blind `git add -A`.
+The loop mirrors Karpathy's autoresearch: make a change, run a fixed evaluation,
+keep if better, revert if worse, repeat indefinitely.
 
 ## Setup
 
-To set up a new experiment, work with the user to:
+1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar19`).
+   The branch `autoresearch/<tag>` must not already exist.
+2. **Create the branch** inside `~/git/blocks`:
+   `git checkout -b autoresearch/<tag>`
+3. **Read the in-scope files** for full context:
+   - `lib/config/game_config.dart` — all tunable constants (grid size, timing,
+     scoring, level progression). Primary target.
+   - `lib/game/systems/scoring_system.dart` — scoring logic.
+   - `lib/game/systems/clearing_system.dart` — 2×2 detection and clear logic.
+   - `lib/game/systems/gravity_system.dart` — cell gravity after clears.
+   - `lib/game/models/piece.dart` — piece patterns and rotation.
+   - `bin/evaluate.dart` — **fixed single-skin harness. Do not modify.**
+   - `bin/evaluate_skins.dart` — **fixed multi-skin harness. Do not modify.**
+4. **Initialize results.tsv** in `~/git/autoresearch-gamedev/` with header row
+   and baseline entry. Run `dart run bin/evaluate_skins.dart` from `~/git/blocks`
+   once to establish YOUR baseline.
+5. **Confirm and go.**
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `README.md` — repository context.
-   - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
-   - `train.py` — the file you modify. Model architecture, optimizer, training loop.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with header row and baseline entry. Run `uv run train.py` once to establish YOUR baseline on this hardware. Do NOT use baseline numbers from other platforms.
-6. **Confirm and go**: Confirm setup looks good.
+## Evaluation
 
-Once you get confirmation, kick off the experimentation.
+Run from `~/git/blocks`:
 
-## Experimentation
+```
+dart run bin/evaluate_skins.dart > run.log 2>&1
+```
 
-Each experiment runs on Apple Silicon via MLX. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
-
-**What you CAN do:**
-- Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
-
-**What you CANNOT do:**
-- Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
-
-**The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
-
-**Memory** is a soft constraint. MLX uses unified memory shared between CPU and GPU. Some increase is acceptable for meaningful val_bpb gains, but it should not blow up dramatically.
-
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a great outcome — that's a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude. A 0.001 val_bpb improvement that adds 20 lines of hacky code? Probably not worth it. A 0.001 val_bpb improvement from deleting code? Definitely keep. An improvement of ~0 but much simpler code? Keep.
-
-**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
-
-## Output format
-
-Once the script finishes it prints a summary like this:
+The script simulates 200 games per skin (1000 total) with a fixed greedy AI,
+then prints per-skin engagement scores and an aggregate:
 
 ```
 ---
-val_bpb:          2.534000
-training_seconds: 312.4
-total_seconds:    405.7
-peak_vram_mb:     27528.9
-mfu_percent:      0.00
-total_tokens_M:   39.8
-num_steps:        46
-num_params_M:     50.3
-depth:            8
+dawn    : engagement=1.502092  gini_q=0.992  progression=1.273  cv=0.190  mean_score=56367.8
+classic : engagement=1.205102  gini_q=0.962  progression=0.957  cv=0.310  mean_score=42368.7
+dusk    : engagement=1.124923  gini_q=0.955  progression=0.881  cv=0.338  mean_score=39698.5
+midnight: engagement=0.872096  gini_q=0.927  progression=0.666  cv=0.412  mean_score=34356.8
+void    : engagement=0.736437  gini_q=0.915  progression=0.580  cv=0.387  mean_score=31515.8
+---
+aggregate_engagement: 1.088130
+difficulty_spread:    2.040  (dawn/void ratio — higher = clearer beginner/expert gap)
+eval_games:           1000 (200 per skin × 5 skins)
+eval_seconds:         6.4
 ```
 
-Note that the script runs for a fixed 5-minute training budget. On Apple Silicon the throughput, step count, and absolute val_bpb will differ from NVIDIA results — that's expected. Compare only against your own baseline on the same hardware.
+**The goal: maximize `aggregate_engagement`.** Higher is better.
+
+Each skin uses the same formula (from `evaluate.dart`):
+- `gini_quality = 4 × gini × (1 − gini)` — peaks at gini=0.5 (healthy mix of scoring moments)
+- `progression = mean(last_50_deltas) / mean(all_150_deltas)` — rewards late-game acceleration
+- `cv_across_bonus = min(cv_across, 0.5)` — rewards replayability across seeds
+- `engagement = gini_quality × progression × (1 + cv_across_bonus)`
+
+`aggregate_engagement = mean(engagement across all 5 skins)`.
+
+Read results with:
 
 ```
-grep "^val_bpb:" run.log
+grep "^aggregate_engagement:" run.log
 ```
+
+If the grep output is empty, the run crashed. Read `tail -n 50 run.log` for the
+Dart stack trace.
+
+## Skin difficulty tiers
+
+The 5 skins span beginner → expert via piece distribution (checker% = harder):
+
+| Skin     | mono% | checker% | Difficulty   |
+|----------|-------|----------|--------------|
+| dawn     | 35    | 15       | beginner     |
+| classic  | 25    | 25       | medium       |
+| dusk     | 25    | 30       | medium-hard  |
+| midnight | 20    | 35       | hard         |
+| void     | 15    | 35       | expert       |
+
+The research goal is to find parameters that:
+1. **Maximize average fun** across all 5 skins (the primary metric).
+2. **Preserve difficulty spread** — dawn should feel clearly easier than void.
+   `difficulty_spread` (dawn/void engagement ratio) is printed as a secondary
+   signal; a drop below ~1.5 suggests the skins have converged (bad).
+3. **Support early-to-late game arc** — `progression` measures whether the game
+   accelerates over its 150-piece run. Good values are 0.8–2.0; below 0.7 means
+   the game front-loads scoring or never builds.
+
+## What you CAN edit
+
+Any file in `~/git/blocks/lib/` **except** files that only affect rendering,
+audio, or Flutter widgets. Focus on:
+
+- `lib/config/game_config.dart` — easiest wins (grid size, scoring constants,
+  level speed, combo thresholds)
+- `lib/game/systems/scoring_system.dart` — scoring formula changes
+- `lib/game/systems/clearing_system.dart` — clearing mechanics
+- `lib/game/models/piece.dart` — add/remove/change piece patterns
+
+## What you CANNOT edit
+
+- `bin/evaluate.dart` — the fixed single-skin evaluation harness
+- `bin/evaluate_skins.dart` — the fixed multi-skin evaluation harness
+- Anything under `lib/game/components/`, `lib/screens/`, `lib/audio/` — these
+  are rendering/UI layers that have no effect on the simulation
+
+## Simplicity criterion
+
+Same as autoresearch: simpler is better all else equal. A 1-point improvement
+that adds 20 lines of convoluted code is not worth it. Deleting code and
+getting equal-or-better results is a great outcome.
+
+## Experiment loop
+
+The branch lives in `~/git/blocks`. All git operations happen there.
+
+LOOP FOREVER:
+
+1. Check current branch/commit: `git log --oneline -5`
+2. Tune one or more in-scope files with an experimental idea.
+3. `git add lib/... && git commit -m "experiment: <description>"`
+   (never `git add -A`)
+4. Run: `dart run bin/evaluate_skins.dart > run.log 2>&1`
+5. Read results: `grep "^aggregate_engagement:" run.log`
+6. If grep is empty: run crashed. Read `tail -n 50 run.log`, fix and re-run.
+   Give up after ~3 failed attempts on the same idea.
+7. Log result to `~/git/autoresearch-gamedev/results.tsv`
+8. If `aggregate_engagement` improved (higher): keep — continue from here.
+9. If equal or worse: log as `discard`, then
+   `git reset --hard <previous kept commit>`.
+
+Each eval run should complete in under 15 seconds. If it exceeds 60 seconds,
+something is wrong — kill it and investigate.
+
+**NEVER STOP.** Once the loop begins, do not pause to ask whether to continue.
+The human may be away. Run until manually interrupted.
 
 ## Logging results
 
-When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
-
-The TSV has a header row and 5 columns:
+`~/git/autoresearch-gamedev/results.tsv` — tab-separated, 5 columns:
 
 ```
-commit	val_bpb	memory_gb	status	description
+commit	aggregate_engagement	difficulty_spread	status	description
 ```
 
-1. git commit hash (short, 7 chars)
-2. val_bpb achieved (e.g. 1.234567) — use 0.000000 for crashes
-3. peak memory in GB, round to .1f (e.g. 12.3 — divide peak_vram_mb by 1024) — use 0.0 for crashes
+1. 7-char git commit hash from `~/git/blocks`
+2. aggregate_engagement (6 decimal places, e.g. `1.088130`)
+3. difficulty_spread (3 decimal places, e.g. `2.040`)
 4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
+5. short description of the experiment
 
 Example:
 
 ```
-commit	val_bpb	memory_gb	status	description
-383abb4	2.667000	26.9	keep	baseline
-909dd59	2.588904	26.9	keep	halve total batch size to 2^16
-4161af3	2.533728	26.9	keep	increase matrix LR to 0.04
+commit	aggregate_engagement	difficulty_spread	status	description
+5b7882d	1.088130	2.040	keep	baseline: 5 skins, placement bonus, soft decay
+...
 ```
-
-## The experiment loop
-
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-gpu0`).
-
-LOOP FOREVER:
-
-1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. `git add autoresearch-mlx/train.py && git commit -m "experiment: <description>"` (never `git add -A` — this may be inside a larger repo)
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in the tsv
-8. If val_bpb improved (lower), `git add autoresearch-mlx/results.tsv && git commit --amend --no-edit` to include the log, advancing the branch
-9. If val_bpb is equal or worse, record the discard commit hash, then `git reset --hard <previous kept commit>` to discard it cleanly
-
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're getting stuck in some way, you can rewind but you should probably do this very very sparingly (if ever).
-
-**Timeout**: Each experiment should take ~7 minutes total (5 min training + ~1 min compile/eval overhead on Apple Silicon). If a run exceeds 15 minutes, kill it and treat it as a failure (discard and revert).
-
-**Crashes**: If a run crashes (OOM, or a bug, or etc.), use your judgment: If it's something dumb and easy to fix (e.g. a typo, a missing import), fix it and re-run. If the idea itself is fundamentally broken, just skip it, log "crash" as the status in the tsv, and move on.
-
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". The human might be asleep, or gone from a computer and expects you to continue working *indefinitely* until you are manually stopped. You are autonomous. If you run out of ideas, think harder — read papers referenced in the code, re-read the in-scope files for new angles, try combining previous near-misses, try more radical architectural changes. The loop runs until the human interrupts you, period.
-
-As an example use case, a user might leave you running while they sleep. If each experiment takes you ~7 minutes then you can run approx 8-9/hour, for a total of about 70 over the duration of the average human sleep. The user then wakes up to experimental results, all completed by you while they slept!
