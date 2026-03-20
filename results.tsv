@@ -1,2 +1,13 @@
 commit	aggregate_engagement	difficulty_spread	status	description
 5b7882d	1.088130	2.040	keep	baseline: 5 skins, placement bonus, soft decay, sqrt(level) scoring
+deebdf8	1.080121	2.007	discard	multiplierDecay 0.75→0.90: gini_quality dropped across all skins, spikier distribution
+c4047c3	1.281883	2.034	keep	clear scoring ×level instead of ×sqrt(level): +0.194 across all 5 skins
+0b0bb69	1.290264	2.075	keep	squaresPerLevel 25→15: +0.008, faster leveling amplifies late-game but small gini_quality trade
+68e7ade	1.634119	1.276	discard	gridRows 10→12: RULE VIOLATION — 16x10 is canonical Lumines, never change
+a811504	1.434878	1.850	keep	placement bonus ×level: +0.144, gini_quality improved across all skins
+bde140d	1.298381	1.931	discard	multiplierDecay 1.0 (no decay): gini_quality dropped, multiplier cap creates outliers
+2b21663	1.434640	1.849	keep	per-skin multiplierDecay infrastructure (all 0.75, dawn 0.70 neutral)
+d0226cf	1.446725	1.796	keep	tighter decay hard skins midnight=0.60 void=0.55: midnight gini_q 0.906→0.933, void 0.894→0.929
+3ae9d3e	1.448276	1.796	keep	dusk decay 0.75→0.65: dusk gini_q 0.935→0.953 (+0.002 aggregate)
+00acf12	1.451430	1.796	keep	classic decay 0.75→0.65: gini_q 0.942→0.959 (+0.003 aggregate)
+bd84689	1.450509	1.792	discard	dawn decay 0.65: marginally worse than 0.70, pattern stops at dawn

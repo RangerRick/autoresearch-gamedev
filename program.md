@@ -109,6 +109,8 @@ audio, or Flutter widgets. Focus on:
 - `bin/evaluate_skins.dart` — the fixed multi-skin evaluation harness
 - Anything under `lib/game/components/`, `lib/screens/`, `lib/audio/` — these
   are rendering/UI layers that have no effect on the simulation
+- **`gridCols` and `gridRows`** — the grid is always 16×10. This is the canonical
+  Lumines grid size and must never change.
 
 ## Simplicity criterion
 
